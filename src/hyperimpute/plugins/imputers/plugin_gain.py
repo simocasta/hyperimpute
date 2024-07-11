@@ -269,18 +269,20 @@ class GainImputation(TransformerMixin):
 
         no, dim = X.shape
 
-        X = X.cpu()
+        X = X.cpu().numpy()
+        
         # MinMaxScaler normalization
         for i in range(dim):
-            X[:, i] = X[:, i] - min_val[i]
-            X[:, i] = X[:, i] / (max_val[i] + EPS)
+            if np.isnan(min_val[i]) or np.isnan(max_val[i]):
+                continue
+            X[:, i] = (X[:, i] - min_val[i]) / (max_val[i] - min_val[i] + EPS)
 
         # Set missing
-        mask = 1 - (1 * (np.isnan(X)))
-        x = np.nan_to_num(X)
+        mask = 1 - np.isnan(X).astype(np.float32)
+        x = np.nan_to_num(X, nan=0.0)
 
-        x = torch.from_numpy(x).to(DEVICE)
-        mask = mask.to(DEVICE)
+        x = torch.from_numpy(x).float().to(DEVICE)
+        mask = torch.from_numpy(mask).float().to(DEVICE)
 
         # Imputed data
         z = sample_Z(no, dim)
@@ -288,20 +290,51 @@ class GainImputation(TransformerMixin):
 
         imputed_data = self.model.generator(x, mask)
 
-        # Renormalize
-        for i in range(dim):
-            imputed_data[:, i] = imputed_data[:, i] * (max_val[i] + EPS)
-            imputed_data[:, i] = imputed_data[:, i] + min_val[i]
-
-        if np.any(np.isnan(imputed_data.detach().cpu().numpy())):
-            err = "The imputed result contains nan. This is a bug. Please report it on the issue tracker."
-            log.critical(err)
+        # Check for NaNs in the imputed data
+        if torch.isnan(imputed_data).any():
+            err = "The imputed result contains NaN values immediately after the generator function. This indicates a potential issue with the generator."
             raise RuntimeError(err)
 
-        mask = mask.cpu()
-        imputed_data = imputed_data.detach().cpu()
+        # Renormalize
+        imputed_data = imputed_data.detach().cpu().numpy()
+        if np.any(np.isnan(imputed_data)):
+            err = "The imputed result contains NaN values after detaching from GPU."
+            raise RuntimeError(err)
+        
+        for i in range(dim):
+            if np.isnan(min_val[i]) or np.isnan(max_val[i]):
+                continue
+            imputed_data[:, i] = imputed_data[:, i] * (max_val[i] - min_val[i] + EPS) + min_val[i]
+        
+        if np.any(np.isnan(imputed_data)):
+            for i in range(dim):
+                if np.isnan(imputed_data[:, i]).any():
+                    print(f"NaNs detected in column {i} during renormalization")
+                    print(f"Column values before renormalization: {imputed_data[:, i]}")
+                    print(f"Min value: {min_val[i]}, Max value: {max_val[i]}")
+            err = f"The imputed result contains NaN values after renormalization. This indicates an issue with the renormalization process."
+            raise RuntimeError(err)
 
-        return mask * np.nan_to_num(Xmiss.cpu()) + (1 - mask) * imputed_data
+        imputed_data = torch.from_numpy(imputed_data).float().to(DEVICE)
+
+        if torch.isnan(imputed_data).any():
+            err = "The imputed result contains nan after converting back to tensor. This is a bug. Please report it on the issue tracker."
+            raise RuntimeError(err)
+
+        mask = mask.cpu().numpy()
+        imputed_data = imputed_data.cpu().numpy()
+
+        if np.any(np.isnan(imputed_data)):
+            err = "The imputed result contains nan after moving to CPU. This is a bug. Please report it on the issue tracker."
+            raise RuntimeError(err)
+
+        result = mask * np.nan_to_num(Xmiss.cpu().numpy()) + (1 - mask) * imputed_data
+
+        if np.any(np.isnan(result)):
+            err = "The final result contains nan. This is a bug. Please report it on the issue tracker."
+            raise RuntimeError(err)
+
+        return torch.from_numpy(result).float().to(DEVICE)
 
     def fit_transform(self, X: torch.Tensor) -> torch.Tensor:
         """Imputes the provided dataset using the GAIN strategy.
