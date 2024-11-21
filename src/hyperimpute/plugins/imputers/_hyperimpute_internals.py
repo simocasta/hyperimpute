@@ -809,7 +809,7 @@ class IterativeErrorCorrection(Serializable):
     ) -> pd.DataFrame:
         # Run an iteration of imputation on a column
         if self.mask[col].sum() == 0:
-        return X
+            return X
 
         cov_cols = self._get_neighbors_for_col(col)
         covs = X[cov_cols]
