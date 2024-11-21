@@ -809,8 +809,15 @@ class IterativeErrorCorrection(Serializable):
     ) -> pd.DataFrame:
         # Run an iteration of imputation on a column
         if self.mask[col].sum() == 0:
-            return X
+        return X
 
+        est = self.column_to_model.get(col)
+        if est is None or getattr(est, 'model', None) is None:
+            # No model was assigned or model could not be fitted
+            unique_value = X[col][~self.mask[col]].mode().iloc[0]
+            X.loc[self.mask[col], col] = unique_value
+            return X
+    
         cov_cols = self._get_neighbors_for_col(col)
         covs = X[cov_cols]
         target = X[col]
@@ -818,31 +825,19 @@ class IterativeErrorCorrection(Serializable):
         X_train = covs[~self.mask[col]]
         y_train = target[~self.mask[col]]
     
-        if y_train.isnull().all() or len(y_train) == 0:
-            # Handle empty y_train
-            print(f"Skipping column {col} due to empty y_train")
-            return X
-    
-        if len(np.unique(y_train)) <= 1:
-            # Only one unique value, fill missing values directly
-            unique_value = y_train.iloc[0]
-            X[col][self.mask[col]] = unique_value
-            return X
-    
-        est = self.column_to_model.get(col)
-        if est is None:
-            # No model was assigned during optimization
+        # Ensure y_train has at least two classes
+        if len(np.unique(y_train)) < 2:
             unique_value = y_train.mode().iloc[0]
-            X[col][self.mask[col]] = unique_value
+            X.loc[self.mask[col], col] = unique_value
             return X
     
         if train:
             est.fit(X_train, y_train)
     
-        X[col][self.mask[col]] = est.predict(covs[self.mask[col]]).values.squeeze()
+        X.loc[self.mask[col], col] = est.predict(covs[self.mask[col]]).values.squeeze()
     
         col_min, col_max = self.limits[col]
-        X[col][self.mask[col]] = np.clip(X[col][self.mask[col]], col_min, col_max)
+        X[col] = X[col].clip(lower=col_min, upper=col_max)
     
         return X
 
