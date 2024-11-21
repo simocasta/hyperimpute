@@ -774,18 +774,14 @@ class IterativeErrorCorrection(Serializable):
         X_train = covs[~self.mask[col]]
         y_train = target[~self.mask[col]]
     
-        if self.optimize_thresh < len(X_train):
-            X_train = X_train.sample(self.optimize_thresh, random_state=self.random_state)
-            y_train = y_train.loc[X_train.index]
-    
-        if col in self.categorical_cols:
-            y_train = y_train.astype(int)
+        if y_train.isnull().all() or len(y_train) == 0:
+            # No data to train the model
+            self.column_to_model[col] = None
+            return 0
     
         if len(np.unique(y_train)) <= 1:
-            # Only one unique value, fill missing values directly
-            self.column_to_model[col] = None  # No model needed
-            self.perf_trace.setdefault(col, []).append(0.0)
-            self.model_trace.setdefault(col, []).append('constant')
+            # Only one unique value, no model needed
+            self.column_to_model[col] = None
             return 0
         
         candidate, score = self.column_to_optimizer[col].evaluate(X_train, y_train)
@@ -813,37 +809,41 @@ class IterativeErrorCorrection(Serializable):
     ) -> pd.DataFrame:
         # Run an iteration of imputation on a column
         if self.mask[col].sum() == 0:
-            return X
+        return X
 
-        if self.column_to_model.get(col) is None:
-            # No model needed; nothing to impute
-            return X
-        
         cov_cols = self._get_neighbors_for_col(col)
         covs = X[cov_cols]
-
         target = X[col]
-
+    
         X_train = covs[~self.mask[col]]
         y_train = target[~self.mask[col]]
-
-        if col in self.categorical_cols:
-            y_train = y_train.astype(int)
-
-        if len(np.unique(y_train)) == 1:
-            X[col][self.mask[col]] = np.asarray(y_train)[0]
+    
+        if y_train.isnull().all() or len(y_train) == 0:
+            # Handle empty y_train
+            print(f"Skipping column {col} due to empty y_train")
             return X
-
-        est = self.column_to_model[col]
-
+    
+        if len(np.unique(y_train)) <= 1:
+            # Only one unique value, fill missing values directly
+            unique_value = y_train.iloc[0]
+            X[col][self.mask[col]] = unique_value
+            return X
+    
+        est = self.column_to_model.get(col)
+        if est is None:
+            # No model was assigned during optimization
+            unique_value = y_train.mode().iloc[0]
+            X[col][self.mask[col]] = unique_value
+            return X
+    
         if train:
             est.fit(X_train, y_train)
-
+    
         X[col][self.mask[col]] = est.predict(covs[self.mask[col]]).values.squeeze()
-
+    
         col_min, col_max = self.limits[col]
         X[col][self.mask[col]] = np.clip(X[col][self.mask[col]], col_min, col_max)
-
+    
         return X
 
     def models(self) -> dict:
