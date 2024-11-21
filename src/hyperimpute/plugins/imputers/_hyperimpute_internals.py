@@ -810,7 +810,7 @@ class IterativeErrorCorrection(Serializable):
         # Run an iteration of imputation on a column
         if self.mask[col].sum() == 0:
             return X
-
+    
         est = self.column_to_model.get(col)
         if est is None or getattr(est, 'model', None) is None:
             # No model was assigned or model could not be fitted
@@ -825,19 +825,22 @@ class IterativeErrorCorrection(Serializable):
         X_train = covs[~self.mask[col]]
         y_train = target[~self.mask[col]]
     
-        # Ensure y_train has at least two classes
-        if len(np.unique(y_train)) < 2:
-            unique_value = y_train.mode().iloc[0]
-            X.loc[self.mask[col], col] = unique_value
-            return X
-    
         if train:
             est.fit(X_train, y_train)
     
-        X.loc[self.mask[col], col] = est.predict(covs[self.mask[col]]).values.squeeze()
+        # Check again after fitting
+        if getattr(est, 'model', None) is None:
+            # Model could not be fitted
+            unique_value = X[col][~self.mask[col]].mode().iloc[0]
+            X.loc[self.mask[col], col] = unique_value
+            return X
     
-        col_min, col_max = self.limits[col]
-        X[col] = X[col].clip(lower=col_min, upper=col_max)
+        try:
+            X.loc[self.mask[col], col] = est.predict(covs[self.mask[col]]).values.squeeze()
+        except Exception as e:
+            print(f"Error during prediction for column {col}: {e}")
+            unique_value = X[col][~self.mask[col]].mode().iloc[0]
+            X.loc[self.mask[col], col] = unique_value
     
         return X
 
