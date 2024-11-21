@@ -58,6 +58,12 @@ class ClassifierPlugin(
             self.model = None  # Indicate that the model could not be fitted
             return self
 
+    def predict(self, X: pd.DataFrame, *args: Any, **kwargs: Any) -> pd.DataFrame:
+        X = cast.to_dataframe(X)
+        if getattr(self, 'model', None) is None:
+            # Model is not fitted
+            raise RuntimeError("Model has not been fitted; cannot perform prediction.")
+        return pd.DataFrame(self._predict(X, *args, **kwargs))
 
     def score(self, X: pd.DataFrame, y: pd.DataFrame, metric: str = "aucroc") -> float:
         ev = Eval(metric)
