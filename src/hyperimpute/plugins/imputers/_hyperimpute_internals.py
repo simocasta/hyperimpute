@@ -809,7 +809,7 @@ class IterativeErrorCorrection(Serializable):
     ) -> pd.DataFrame:
         # Run an iteration of imputation on a column
         if self.mask[col].sum() == 0:
-        return X
+            return X
 
         est = self.column_to_model.get(col)
         if est is None or getattr(est, 'model', None) is None:
