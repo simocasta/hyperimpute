@@ -735,24 +735,40 @@ class IterativeErrorCorrection(Serializable):
 
     @validate_arguments(config=dict(arbitrary_types_allowed=True))
     def _check_similar(self, X: pd.DataFrame, col: str) -> Any:
+        # If lazy selection is not enabled, return None
         if not self.select_lazy:
             return None
-
+    
         similar_cols = []
         for ref_col in self.column_to_model:
+            # If model selection is not by column, return any available model
             if not self.select_model_by_column:
-                return copy.deepcopy(self.column_to_model[ref_col])
-
+                model = self.column_to_model[ref_col]
+                if model is not None:
+                    return copy.deepcopy(model)
+                else:
+                    continue  # No model available, continue to next
+    
+            # Check if the reference column and target column are of the same type
             if not self._is_same_type(ref_col, col):
                 continue
-
-            arch = self.column_to_model[ref_col].name()
-
+    
+            # Retrieve the model for the reference column
+            model = self.column_to_model[ref_col]
+            if model is None:
+                continue  # Skip if the model is None
+    
+            # Get the name of the model architecture
+            arch = model.name()
+    
+            # If the architecture is already in similar_cols, return a copy of the model
             if arch in similar_cols:
-                return copy.deepcopy(self.column_to_model[ref_col])
-
-            similar_cols.append(self.column_to_model[ref_col].name())
-
+                return copy.deepcopy(model)
+    
+            # Add the architecture to the list of similar architectures
+            similar_cols.append(arch)
+    
+        # If no similar model is found, return None
         return None
 
     @validate_arguments(config=dict(arbitrary_types_allowed=True))
