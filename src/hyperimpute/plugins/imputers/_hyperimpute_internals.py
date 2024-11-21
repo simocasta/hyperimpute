@@ -758,8 +758,8 @@ class IterativeErrorCorrection(Serializable):
     @validate_arguments(config=dict(arbitrary_types_allowed=True))
     def _optimize_model_for_column(self, X: pd.DataFrame, col: str) -> float:
         # BO evaluation for a single column
-        if self.mask[col].sum() == 0:
-            return 0
+        # if self.mask[col].sum() == 0:
+        #     return 0
 
         similar_candidate = self._check_similar(X, col)
         if similar_candidate is not None:
@@ -772,8 +772,9 @@ class IterativeErrorCorrection(Serializable):
         target = X[col]
 
         if self.mask[col].sum() == 0:
-            X_train = covs
-            y_train = target
+            # X_train = covs
+            # y_train = target
+            return 0
         else:
             X_train = covs[~self.mask[col]]
             y_train = target[~self.mask[col]]
@@ -784,7 +785,16 @@ class IterativeErrorCorrection(Serializable):
 
         if col in self.categorical_cols:
             y_train = y_train.astype(int)
-
+        
+        #### Addition 21/11/2024
+        if len(np.unique(y_train)) <= 1:
+            # Only one unique value, fill missing values directly
+            self.column_to_model[col] = None  # No model needed
+            self.perf_trace.setdefault(col, []).append(0.0)
+            self.model_trace.setdefault(col, []).append('constant')
+            return 0
+        ####
+        
         candidate, score = self.column_to_optimizer[col].evaluate(X_train, y_train)
         self.column_to_model[col] = candidate
         self.perf_trace.setdefault(col, []).append(score)
@@ -812,6 +822,14 @@ class IterativeErrorCorrection(Serializable):
         if self.mask[col].sum() == 0:
             return X
 
+        #### Addition 21/11
+        if col not in self.column_to_model or self.column_to_model[col] is None:
+            # Fill missing values with the unique value
+            unique_value = X[col][~self.mask[col]].iloc[0]
+            X[col][self.mask[col]] = unique_value
+            return X
+        ####
+        
         cov_cols = self._get_neighbors_for_col(col)
         covs = X[cov_cols]
 
