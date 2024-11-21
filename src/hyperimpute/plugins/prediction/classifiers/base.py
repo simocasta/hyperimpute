@@ -44,20 +44,20 @@ class ClassifierPlugin(
     def fit(self, X: pd.DataFrame, *args: Any, **kwargs: Any) -> plugin.Plugin:
         X = cast.to_dataframe(X)
         enable_reproducible_results(self.random_state)
-
+    
         if len(args) == 0:
             raise RuntimeError("Please provide the training labels as well")
-
+    
         Y = cast.to_dataframe(args[0]).values.ravel()
+    
         try:
             return self._fit(X, Y, **kwargs)
-        except ValueError as e:
+        except Exception as e:
             # Handle the exception gracefully
             print(f"Error fitting model: {e}")
             self.model = None  # Indicate that the model could not be fitted
             return self
-        
-        return self._fit(X, Y, **kwargs)
+
 
     def score(self, X: pd.DataFrame, y: pd.DataFrame, metric: str = "aucroc") -> float:
         ev = Eval(metric)
