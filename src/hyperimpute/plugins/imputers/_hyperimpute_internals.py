@@ -859,7 +859,12 @@ class IterativeErrorCorrection(Serializable):
     @validate_arguments(config=dict(arbitrary_types_allowed=True))
     def _is_categorical(self, X: pd.DataFrame, col: str) -> bool:
         # Helper for filtering categorical columns
-        return len(X[col].unique()) < self.class_threshold
+        # Check if the column's data type is integer
+        is_integer = pd.api.types.is_integer_dtype(X[col])
+        # Check if the number of unique values is below the threshold
+        has_few_unique = X[col].nunique() <= self.class_threshold
+        # Return True only if both conditions are met
+        return is_integer and has_few_unique
 
     @validate_arguments(config=dict(arbitrary_types_allowed=True))
     def _missing_indicator(self, X: pd.DataFrame) -> pd.DataFrame:
