@@ -735,56 +735,71 @@ class IterativeErrorCorrection(Serializable):
 
     @validate_arguments(config=dict(arbitrary_types_allowed=True))
     def _check_similar(self, X: pd.DataFrame, col: str) -> Any:
+        # If lazy selection is not enabled, return None
         if not self.select_lazy:
             return None
-
+    
         similar_cols = []
         for ref_col in self.column_to_model:
+            # If model selection is not by column, return any available model
             if not self.select_model_by_column:
-                return copy.deepcopy(self.column_to_model[ref_col])
-
+                model = self.column_to_model[ref_col]
+                if model is not None:
+                    return copy.deepcopy(model)
+                else:
+                    continue  # No model available, continue to next
+    
+            # Check if the reference column and target column are of the same type
             if not self._is_same_type(ref_col, col):
                 continue
-
-            arch = self.column_to_model[ref_col].name()
-
+    
+            # Retrieve the model for the reference column
+            model = self.column_to_model[ref_col]
+            if model is None:
+                continue  # Skip if the model is None
+    
+            # Get the name of the model architecture
+            arch = model.name()
+    
+            # If the architecture is already in similar_cols, return a copy of the model
             if arch in similar_cols:
-                return copy.deepcopy(self.column_to_model[ref_col])
-
-            similar_cols.append(self.column_to_model[ref_col].name())
-
+                return copy.deepcopy(model)
+    
+            # Add the architecture to the list of similar architectures
+            similar_cols.append(arch)
+    
+        # If no similar model is found, return None
         return None
 
     @validate_arguments(config=dict(arbitrary_types_allowed=True))
     def _optimize_model_for_column(self, X: pd.DataFrame, col: str) -> float:
         # BO evaluation for a single column
         if self.mask[col].sum() == 0:
+            self.column_to_model[col] = None  # Indicate no model is needed
             return 0
-
+    
         similar_candidate = self._check_similar(X, col)
         if similar_candidate is not None:
             self.column_to_model[col] = similar_candidate
             return 0
-
+    
         cov_cols = self._get_neighbors_for_col(col)
         covs = X[cov_cols]
-
         target = X[col]
-
-        if self.mask[col].sum() == 0:
-            X_train = covs
-            y_train = target
-        else:
-            X_train = covs[~self.mask[col]]
-            y_train = target[~self.mask[col]]
-
-        if self.optimize_thresh < len(X_train):
-            X_train = X_train.sample(self.optimize_thresh)
-            y_train = y_train[X_train.index]
-
-        if col in self.categorical_cols:
-            y_train = y_train.astype(int)
-
+    
+        X_train = covs[~self.mask[col]]
+        y_train = target[~self.mask[col]]
+    
+        if y_train.isnull().all() or len(y_train) == 0:
+            # No data to train the model
+            self.column_to_model[col] = None
+            return 0
+    
+        if len(np.unique(y_train)) <= 1:
+            # Only one unique value, no model needed
+            self.column_to_model[col] = None
+            return 0
+        
         candidate, score = self.column_to_optimizer[col].evaluate(X_train, y_train)
         self.column_to_model[col] = candidate
         self.perf_trace.setdefault(col, []).append(score)
@@ -811,32 +826,38 @@ class IterativeErrorCorrection(Serializable):
         # Run an iteration of imputation on a column
         if self.mask[col].sum() == 0:
             return X
-
+    
+        est = self.column_to_model.get(col)
+        if est is None or getattr(est, 'model', None) is None:
+            # No model was assigned or model could not be fitted
+            unique_value = X[col][~self.mask[col]].mode().iloc[0]
+            X.loc[self.mask[col], col] = unique_value
+            return X
+    
         cov_cols = self._get_neighbors_for_col(col)
         covs = X[cov_cols]
-
         target = X[col]
-
+    
         X_train = covs[~self.mask[col]]
         y_train = target[~self.mask[col]]
-
-        if col in self.categorical_cols:
-            y_train = y_train.astype(int)
-
-        if len(np.unique(y_train)) == 1:
-            X[col][self.mask[col]] = np.asarray(y_train)[0]
-            return X
-
-        est = self.column_to_model[col]
-
+    
         if train:
             est.fit(X_train, y_train)
-
-        X[col][self.mask[col]] = est.predict(covs[self.mask[col]]).values.squeeze()
-
-        col_min, col_max = self.limits[col]
-        X[col][self.mask[col]] = np.clip(X[col][self.mask[col]], col_min, col_max)
-
+    
+        # Check again after fitting
+        if getattr(est, 'model', None) is None:
+            # Model could not be fitted
+            unique_value = X[col][~self.mask[col]].mode().iloc[0]
+            X.loc[self.mask[col], col] = unique_value
+            return X
+    
+        try:
+            X.loc[self.mask[col], col] = est.predict(covs[self.mask[col]]).values.squeeze()
+        except Exception as e:
+            print(f"Error during prediction for column {col}: {e}")
+            unique_value = X[col][~self.mask[col]].mode().iloc[0]
+            X.loc[self.mask[col], col] = unique_value
+    
         return X
 
     def models(self) -> dict:
